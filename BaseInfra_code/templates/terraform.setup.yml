@@ -1,0 +1,70 @@
+# -----------------------------------------------------------------------------
+# .SYNOPSIS
+#   This pipeline will validate the resource group, storage account, and storage container.
+#   It will also create the tfvars file inside of the terraform folder.
+# .DESCRIPTION
+#   This pipeline will:
+#  1. validate the resource group, storage account, and storage container by:
+#     a. checking if these resources exist (if so, step b. will be skipped)
+#     b. creating these resources given the parameters
+#  2. create the tfvars file using the cat function and the parameters and variables created in the script
+
+
+# .ASSUMPTIONS:
+#     1. You are referencing this template from an ado pipeline
+#        under the jobs object
+
+# .NOTES
+#     File Name      : terraform.setup.yml
+#     Prerequisite   : ADO Multi-Stage Yaml Pipeline
+
+# .PARAMETER service_connection
+#     Name of the Azure DevOps Service Connection
+# .PARAMETER name
+#     Name used for the resource group and storage account
+# .PARAMETER tfstate_container
+#     Name of the storage container
+# .PARAMETER resource_group_location
+#     Location of resources
+# -----------------------------------------------------------------------------
+    
+parameters:
+    service_connection: ''
+    resource_group_name: ''
+    tfstate_container: ''
+    resource_group_location: ''
+  
+steps:
+- bash: terraform fmt ./terraform
+  displayName: Terraform Format
+- task: AzureCLI@2
+  displayName: Backend Infrastructure Setup
+  inputs:
+    azureSubscription: ${{ parameters.service_connection }} 
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+        set +e
+        if [ $(az group exists -n ${{ parameters.resource_group_name }} -o tsv) = false ]
+        then
+            echo "Resource Group ${{ parameters.resource_group_name }} needs to be created"
+            az group create --name ${{ parameters.resource_group_name }} --location ${{ parameters.resource_group_location }}
+        else
+            echo "Using resource group ${{ parameters.resource_group_name }}"
+        fi
+        az storage account show -n ${{ parameters.resource_group_name }} -g ${{ parameters.resource_group_name }} > /dev/null
+        if [ $? -eq 0 ]
+        then
+            echo "Using storage account ${{ parameters.resource_group_name }} in resource group ${{ parameters.resource_group_name }}"
+        else
+            az storage account create --resource-group ${{ parameters.resource_group_name }} --name ${{ parameters.resource_group_name }} --sku Standard_LRS --encryption-services blob
+        fi
+        az keyvault show --name ${{ parameters.resource_group_name }} > /dev/null
+        if [ $? -eq 0 ]
+        then
+            echo "Using keyvault ${{ parameters.resource_group_name }}"
+        else
+            echo "KeyVault ${{ parameters.resource_group_name }} needs to be created"
+        fi
+        set -e
+        az storage container create --name ${{ parameters.tfstate_container }} --account-name ${{ parameters.resource_group_name }}  

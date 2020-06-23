@@ -1,0 +1,101 @@
+# -----------------------------------------------------------------------------
+# .SYNOPSIS
+#   This pipeline will perform terraform init and terraform plan (written to the .plan file) functions.
+# .DESCRIPTION
+#   This pipeline will:
+#  1. perform the terraform init function
+#     a. configure the terraform backend to use the values stored in the parameters 
+#        and variables (e.g. resource group, storage account, etc.)
+#  2. perform the terraform plan function and write this to a .plan file
+
+
+# .ASSUMPTIONS:
+#     1. You are referencing this template from an ado pipeline
+#        under the jobs object
+
+# .NOTES
+#     File Name      : terraform.plan.apply.yml
+#     Prerequisite   : ADO Multi-Stage Yaml Pipeline
+
+# .PARAMETER service_connection
+#     Name of the Azure DevOps Service Connection
+# .PARAMETER resource_group_name
+#     Name used for the resource group and storage account
+# .PARAMETER tfstate_container
+#     Name of the storage container
+# .PARAMETER resource_group_location
+#     Location of resources
+# -----------------------------------------------------------------------------
+
+parameters:
+  service_connection: ''
+  resource_group_name: ''
+  tfstate_container: ''
+  resource_group_location: ''
+  app_name: ''
+  k8s_prefix: ''
+  k8s_client_id: ''
+  k8s_client_secret: ''
+  env: ''
+  config_file: ''
+steps:
+- task: AzureCLI@2
+  displayName: Terraform Init
+  inputs:
+    azureSubscription: ${{ parameters.service_connection }} 
+    addSpnToEnvironment: true
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+        ARM_SUBSCRIPTION_ID=$(az account show --query id --out tsv)
+        cd terraform
+        ls
+        export ARM_CLIENT_ID=$servicePrincipalId
+        export ARM_CLIENT_SECRET=$servicePrincipalKey
+        export ARM_SUBSCRIPTION_ID=$(az account show --query id | xargs)
+        export ARM_TENANT_ID=$(az account show --query tenantId | xargs)
+        terraform init -upgrade -input=false  \
+            -backend-config="subscription_id=$ARM_SUBSCRIPTION_ID" \
+            -backend-config="tenant_id=$tenantId" \
+            -backend-config="client_id=$servicePrincipalId" \
+            -backend-config="client_secret=$servicePrincipalKey" \
+            -backend-config="resource_group_name=${{ parameters.resource_group_name }}" \
+            -backend-config="storage_account_name=${{ parameters.resource_group_name }}" \
+            -backend-config="container_name=${{ parameters.tfstate_container }}" \
+            -backend-config="key=${{ parameters.tfstate_container }}.tfstate"
+- task: AzureCLI@2
+  displayName: Terraform Plan
+  inputs:
+    azureSubscription: ${{ parameters.service_connection }} 
+    scriptType: bash
+    addSpnToEnvironment: true
+    scriptLocation: inlineScript
+    inlineScript: |
+        cd terraform
+        export ARM_CLIENT_ID=$servicePrincipalId
+        export ARM_CLIENT_SECRET=$servicePrincipalKey
+        export ARM_SUBSCRIPTION_ID=$(az account show --query id | xargs)
+        export ARM_TENANT_ID=$(az account show --query tenantId | xargs)
+        ARM_SUBSCRIPTION_ID=$(az account show --query id --out tsv)
+        terraform plan -out ${{ parameters.tfstate_container }}.plan -input=false \
+            -var-file="./config/${{parameters.config_file}}" \
+            -var="subscription_id=$ARM_SUBSCRIPTION_ID" \
+            -var="tenant_id=$tenantId" \
+            -var="client_id=$servicePrincipalId" \
+            -var="client_secret=$servicePrincipalKey"
+- task: AzureCLI@2
+  condition: succeeded()
+  displayName: Terraform Apply
+  inputs:
+    azureSubscription: ${{ parameters.service_connection }}
+    scriptType: bash
+    addSpnToEnvironment: true
+    scriptLocation: inlineScript
+    inlineScript: |
+        cd terraform
+        export ARM_CLIENT_ID=$servicePrincipalId
+        export ARM_CLIENT_SECRET=$servicePrincipalKey
+        export ARM_SUBSCRIPTION_ID=$(az account show --query id | xargs)
+        export ARM_TENANT_ID=$(az account show --query tenantId | xargs)
+        terraform apply ${{ parameters.tfstate_container }}.plan
+        #terraform destroy -var-file="./config/${{parameters.config_file}}"

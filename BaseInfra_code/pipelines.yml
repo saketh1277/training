@@ -1,0 +1,85 @@
+name: $(version_prefix).$(Rev:rr)
+
+trigger:
+  batch: true
+  branches:
+    include:
+    - master
+
+variables:
+  # debug true variable
+  - name: system.debug
+    value: false
+  - name: skipComponentGovernanceDetection
+    value: true
+  
+  # general variables
+  - name: version_prefix
+    value: 0.1
+  - name: app_name
+    value: 'windowssharedservice'  
+
+  - name: az_subscription_name
+    value: 'ES-CUS-AT&TEXHIBIT01-DEV-ATTDEVOPSPATTERN' 
+    #'Microsoft Azure' # Todo: set
+
+  - name: az_location
+    value: eastus2
+
+  - name: app_resource_group_name
+    value: $(app_name)_$(env)_rg
+
+  - name: config_file
+    value: 'windowSharedServices-dev.tfvars'
+
+  - name: tf_state_resource_group_name
+    value: tfstate$(rand)
+  - name: state_container
+    value: sharedservices
+  - name: service_connection_dev
+    value: 'DevOps-Patterns-Base-Infrastructure-SPN'
+
+  - name: rand #needs to be replaced with a random string (last four of a random GUID is used here.)
+    value: wssbaseinfra
+
+  - name: agent_pool
+    value: custom_vmss
+
+pool: $(agent_pool) 
+
+stages: 
+  - stage: deploy_dev
+    displayName: Deploy dev env
+    variables:
+    - name: env
+      value: dev
+    jobs:
+    - job: setup_terraform
+      displayName: setup state backend for ${{variables.env}}
+      steps:
+      - template: ./templates/terraform.setup.yml
+        parameters:
+          service_connection: $(service_connection_dev)
+          resource_group_name: $(tf_state_resource_group_name)
+          resource_group_location: $(az_location)
+          tfstate_container: $(state_container)
+          addSpnToEnvironment: true
+
+
+    - job: tf_plan_apply
+      displayName: TF plan/apply for ${{variables.env}}
+      dependsOn: setup_terraform
+      steps:
+      - template: ./templates/terraform.plan.apply.yml
+        parameters:
+          service_connection: $(service_connection_dev)
+          resource_group_name: $(tf_state_resource_group_name)
+          resource_group_location: $(az_location)
+          tfstate_container: $(state_container)
+          k8s_prefix: $(app_name)
+          k8s_client_id: '$(ARM-CLIENT-ID)'
+          k8s_client_secret: '$(ARM-CLIENT-SECRET)'
+          env: 'dev'
+          app_name: $(app_name)
+          config_file: $(config_file)
+          addSpnToEnvironment: true
